@@ -324,14 +324,31 @@ class AsyncProgressTracker:
         # 特殊处理工具调用消息，更新步骤描述但不改变步骤
         step_description = current_step_info['description']
         if "工具调用" in message:
-            # 提取工具名称并更新描述
-            if "get_stock_market_data_unified" in message:
+            # 统一修正/识别工具名称（容错拼写 & 前缀匹配）
+            normalized_msg = message
+            # 常见错误拼写 -> 统一工具名
+            try:
+                normalized_msg = normalized_msg.replace(
+                    "get_stock_market_data_untered", "get_stock_market_data_unified"
+                )
+            except Exception:
+                pass
+
+            # 根据工具名（宽松匹配）设置更贴切的步骤描述
+            if (
+                "get_stock_market_data_unified" in normalized_msg
+                or "get_stock_market_data" in normalized_msg
+            ):
                 step_description = "正在获取市场数据和技术指标..."
-            elif "get_stock_fundamentals_unified" in message:
+            elif (
+                "get_stock_fundamentals_unified" in normalized_msg
+                or "get_stock_fundamentals" in normalized_msg
+                or "fundamentals" in normalized_msg
+            ):
                 step_description = "正在获取基本面数据和财务指标..."
-            elif "get_china_stock_data" in message:
+            elif "get_china_stock_data" in normalized_msg:
                 step_description = "正在获取A股市场数据..."
-            elif "get_china_fundamentals" in message:
+            elif "get_china_fundamentals" in normalized_msg:
                 step_description = "正在获取A股基本面数据..."
             else:
                 step_description = "正在调用分析工具..."

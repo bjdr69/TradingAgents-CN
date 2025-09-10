@@ -12,6 +12,9 @@ from typing import Optional, Dict, Any
 from .cache_manager import get_cache
 from .config import get_config
 
+import time
+import pandas as pd
+
 # 导入日志模块
 from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
@@ -40,7 +43,7 @@ class OptimizedChinaDataProvider:
         self.last_api_call = time.time()
     
     def get_stock_data(self, symbol: str, start_date: str, end_date: str, 
-                      force_refresh: bool = False) -> str:
+                      force_refresh: bool = False) -> pd.DataFrame:
         """
         获取A股数据 - 优先使用缓存
         
@@ -186,6 +189,45 @@ class OptimizedChinaDataProvider:
             logger.error(f"❌ {error_msg}")
             return self._generate_fallback_fundamentals(symbol, error_msg)
     
+    def _get_realtime_price(self, symbol: str) -> Optional[float]:
+        """获取实时股价"""
+        try:
+            import requests
+            # 构造请求URL
+            url = f"https://qt.gtimg.cn/q=sh{symbol}"
+            # 发送GET请求
+            response = requests.get(url)
+            # 获取响应内容
+            content = response.text
+            # 解析响应内容
+            price = float(content.split('~')[3])
+            return price
+        except Exception as e:
+            logger.error(f"获取实时股价失败: {e}")
+            return None
+
+    def _get_latest_price(self, symbol: str) -> Optional[float]:
+        """获取最新股价"""
+        price = self._get_realtime_price(symbol)
+        if price is not None:
+            return price
+
+        for _ in range(3):
+            try:
+                from .akshare_utils import get_akshare_provider
+                provider = get_akshare_provider()
+                if provider.connected:
+                    # 使用实时行情接口获取最新价格
+                    stock_data = provider.ak.stock_zh_a_spot_em()
+                    if stock_data is not None and not stock_data.empty:
+                        price = stock_data[stock_data['代码'] == symbol]['最新价'].values[0]
+                        return float(price)
+                return None
+            except Exception as e:
+                logger.error(f"获取最新股价失败: {e}")
+                time.sleep(1)
+        return None
+
     def _generate_fundamentals_report(self, symbol: str, stock_data: str) -> str:
         """基于股票数据生成真实的基本面分析报告"""
 
@@ -218,18 +260,33 @@ class OptimizedChinaDataProvider:
         except Exception as e:
             logger.warning(f"⚠️ 获取股票基本信息失败: {e}")
 
-        # 然后从股票数据中提取价格信息
-        if "股票名称:" in stock_data:
-            lines = stock_data.split('\n')
-            for line in lines:
-                if "股票名称:" in line and company_name == "未知公司":
-                    company_name = line.split(':')[1].strip()
-                elif "当前价格:" in line:
-                    current_price = line.split(':')[1].strip()
-                elif "涨跌幅:" in line:
-                    change_pct = line.split(':')[1].strip()
-                elif "成交量:" in line:
-                    volume = line.split(':')[1].strip()
+                # ... (previous code)
+
+        # 获取最新价格
+        latest_price = self._get_latest_price(symbol)
+        if latest_price is not None:
+            current_price = f"¥{latest_price:.2f}"
+
+        # ... (rest of the function)
+
+        import io
+        import pandas as pd
+        latest_close_price = "N/A"
+        if isinstance(stock_data, str):
+            try:
+                df = pd.read_csv(io.StringIO(stock_data), sep="\s+")
+                if not df.empty:
+                    latest_close_price = df['收盘'].iloc[-1]
+            except:
+                pass
+
+        # 获取最新价格
+        latest_price = self._get_latest_price(symbol)
+        if latest_price is not None:
+            current_price = f"¥{latest_price:.2f}"
+        else:
+            current_price = "N/A"
+        current_price = latest_close_price
 
         # 尝试从股票数据表格中提取最新价格信息
         if current_price == "N/A" and stock_data:
@@ -459,10 +516,16 @@ class OptimizedChinaDataProvider:
         """获取真实财务指标（优先使用Tushare真实数据，失败时使用估算）"""
 
         # 提取价格数值
+        price_value = None
         try:
-            price_value = float(current_price.replace('¥', '').replace(',', ''))
-        except:
-            price_value = 10.0  # 默认值
+            price_value = float(str(current_price).replace('¥', '').replace(',', ''))
+        except (ValueError, TypeError):
+            logger.warning(f"⚠️ 无法解析当前股价: '{current_price}'，将尝试从API获取")
+            price_value = self._get_latest_price(symbol)
+
+        if price_value is None:
+            logger.error(f"❌ 无法获取 {symbol} 的有效股价，使用默认值10.0进行估算")
+            price_value = 10.0
 
         # 尝试获取真实财务数据
         real_metrics = self._get_real_financial_metrics(symbol, price_value)
@@ -532,7 +595,7 @@ class OptimizedChinaDataProvider:
             stock_info = provider.get_stock_info(symbol)
             
             # 解析Tushare财务数据
-            metrics = self._parse_financial_data(financial_data, stock_info, price_value)
+            metrics = self._parse_tushare_financial_data(financial_data, stock_info, price_value)
             if metrics:
                 return metrics
                 
@@ -545,42 +608,34 @@ class OptimizedChinaDataProvider:
         """解析AKShare财务数据为指标"""
         try:
             # 获取最新的财务数据
-            balance_sheet = financial_data.get('balance_sheet', [])
-            income_statement = financial_data.get('income_statement', [])
-            cash_flow = financial_data.get('cash_flow', [])
             main_indicators = financial_data.get('main_indicators')
             
             if main_indicators is None or main_indicators.empty:
                 logger.warning("AKShare主要财务指标为空")
                 return None
+
+            # 将长格式的DataFrame转换为宽格式
+            indicators_df = main_indicators.pivot(index='指标', columns='报表日期', values='值')
             
-            # main_indicators是DataFrame，需要转换为字典格式便于查找
-            # 获取最新数据列（第3列，索引为2）
-            latest_col = main_indicators.columns[2] if len(main_indicators.columns) > 2 else None
-            if not latest_col:
-                logger.warning("AKShare主要财务指标缺少数据列")
-                return None
-            
+            # 获取最新数据列
+            latest_col = indicators_df.columns[-1]
             logger.info(f"📅 使用AKShare最新数据期间: {latest_col}")
             
             # 创建指标名称到值的映射
-            indicators_dict = {}
-            for _, row in main_indicators.iterrows():
-                indicator_name = row['指标']
-                value = row[latest_col]
-                indicators_dict[indicator_name] = value
+            indicators_dict = indicators_df[latest_col].to_dict()
             
             logger.debug(f"AKShare主要财务指标数量: {len(indicators_dict)}")
+            logger.info(f"AKShare indicators_dict: {indicators_dict}")
             
             # 计算财务指标
             metrics = {}
             
             # 获取ROE - 直接从指标中获取
-            roe_value = indicators_dict.get('净资产收益率(ROE)')
+            roe_value = indicators_dict.get('净资产收益率(%)')
             if roe_value is not None and str(roe_value) != 'nan' and roe_value != '--':
                 try:
                     roe_val = float(roe_value)
-                    # ROE通常是百分比形式
+                    # ROE已经是百分比形式
                     metrics["roe"] = f"{roe_val:.1f}%"
                     logger.debug(f"✅ 获取ROE: {metrics['roe']}")
                 except (ValueError, TypeError):
@@ -589,7 +644,7 @@ class OptimizedChinaDataProvider:
                 metrics["roe"] = "N/A"
             
             # 获取每股收益 - 用于计算PE
-            eps_value = indicators_dict.get('基本每股收益')
+            eps_value = indicators_dict.get('基本每股收益(元)')
             if eps_value is not None and str(eps_value) != 'nan' and eps_value != '--':
                 try:
                     eps_val = float(eps_value)
@@ -606,7 +661,7 @@ class OptimizedChinaDataProvider:
                 metrics["pe"] = "N/A"
             
             # 获取每股净资产 - 用于计算PB
-            bps_value = indicators_dict.get('每股净资产_最新股数')
+            bps_value = indicators_dict.get('每股净资产(元)')
             if bps_value is not None and str(bps_value) != 'nan' and bps_value != '--':
                 try:
                     bps_val = float(bps_value)
@@ -622,95 +677,6 @@ class OptimizedChinaDataProvider:
             else:
                 metrics["pb"] = "N/A"
             
-            # 尝试获取其他指标
-            # 总资产收益率(ROA)
-            roa_value = indicators_dict.get('总资产报酬率')
-            if roa_value is not None and str(roa_value) != 'nan' and roa_value != '--':
-                try:
-                    roa_val = float(roa_value)
-                    metrics["roa"] = f"{roa_val:.1f}%"
-                except (ValueError, TypeError):
-                    metrics["roa"] = "N/A"
-            else:
-                metrics["roa"] = "N/A"
-            
-            # 毛利率
-            gross_margin_value = indicators_dict.get('毛利率')
-            if gross_margin_value is not None and str(gross_margin_value) != 'nan' and gross_margin_value != '--':
-                try:
-                    gross_margin_val = float(gross_margin_value)
-                    metrics["gross_margin"] = f"{gross_margin_val:.1f}%"
-                except (ValueError, TypeError):
-                    metrics["gross_margin"] = "N/A"
-            else:
-                metrics["gross_margin"] = "N/A"
-            
-            # 销售净利率
-            net_margin_value = indicators_dict.get('销售净利率')
-            if net_margin_value is not None and str(net_margin_value) != 'nan' and net_margin_value != '--':
-                try:
-                    net_margin_val = float(net_margin_value)
-                    metrics["net_margin"] = f"{net_margin_val:.1f}%"
-                except (ValueError, TypeError):
-                    metrics["net_margin"] = "N/A"
-            else:
-                metrics["net_margin"] = "N/A"
-            
-            # 资产负债率
-            debt_ratio_value = indicators_dict.get('资产负债率')
-            if debt_ratio_value is not None and str(debt_ratio_value) != 'nan' and debt_ratio_value != '--':
-                try:
-                    debt_ratio_val = float(debt_ratio_value)
-                    metrics["debt_ratio"] = f"{debt_ratio_val:.1f}%"
-                except (ValueError, TypeError):
-                    metrics["debt_ratio"] = "N/A"
-            else:
-                metrics["debt_ratio"] = "N/A"
-            
-            # 流动比率
-            current_ratio_value = indicators_dict.get('流动比率')
-            if current_ratio_value is not None and str(current_ratio_value) != 'nan' and current_ratio_value != '--':
-                try:
-                    current_ratio_val = float(current_ratio_value)
-                    metrics["current_ratio"] = f"{current_ratio_val:.2f}"
-                except (ValueError, TypeError):
-                    metrics["current_ratio"] = "N/A"
-            else:
-                metrics["current_ratio"] = "N/A"
-            
-            # 速动比率
-            quick_ratio_value = indicators_dict.get('速动比率')
-            if quick_ratio_value is not None and str(quick_ratio_value) != 'nan' and quick_ratio_value != '--':
-                try:
-                    quick_ratio_val = float(quick_ratio_value)
-                    metrics["quick_ratio"] = f"{quick_ratio_val:.2f}"
-                except (ValueError, TypeError):
-                    metrics["quick_ratio"] = "N/A"
-            else:
-                metrics["quick_ratio"] = "N/A"
-            
-            # 补充其他指标的默认值
-            metrics.update({
-                "ps": "待计算",
-                "dividend_yield": "待查询",
-                "cash_ratio": "待分析"
-            })
-            
-            # 评分（基于AKShare数据的简化评分）
-            fundamental_score = self._calculate_fundamental_score(metrics, stock_info)
-            valuation_score = self._calculate_valuation_score(metrics)
-            growth_score = self._calculate_growth_score(metrics, stock_info)
-            risk_level = self._calculate_risk_level(metrics, stock_info)
-            
-            metrics.update({
-                "fundamental_score": fundamental_score,
-                "valuation_score": valuation_score,
-                "growth_score": growth_score,
-                "risk_level": risk_level,
-                "data_source": "AKShare"
-            })
-            
-            logger.info(f"✅ AKShare财务数据解析成功: PE={metrics['pe']}, PB={metrics['pb']}, ROE={metrics['roe']}")
             return metrics
             
         except Exception as e:

@@ -27,8 +27,8 @@ def analyze_my_stock():
     """分析您感兴趣的股票"""
     
     # 🎯 在这里修改您要分析的股票
-    STOCK_SYMBOL = "NVDA"  # 修改为您想分析的股票代码
-    ANALYSIS_FOCUS = "AI芯片和数据中心业务前景"  # 修改分析重点
+    STOCK_SYMBOL = "600036"  # 修改为您想分析的股票代码
+    ANALYSIS_FOCUS = ""  # 修改分析重点
     
     logger.info(f"🚀 开始分析股票: {STOCK_SYMBOL}")
     logger.info(f"🎯 分析重点: {ANALYSIS_FOCUS}")

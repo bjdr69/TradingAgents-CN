@@ -49,8 +49,8 @@ class AKShareProvider:
 
                 # 创建重试策略
                 retry_strategy = Retry(
-                    total=3,
-                    backoff_factor=1,
+                    total=5,
+                    backoff_factor=2,
                     status_forcelist=[429, 500, 502, 503, 504],
                 )
 
@@ -60,7 +60,7 @@ class AKShareProvider:
                 session.mount("http://", adapter)
                 session.mount("https://", adapter)
 
-                logger.info(f"🔧 AKShare超时配置完成: 60秒超时，3次重试")
+                logger.info(f"🔧 AKShare超时配置完成: 120秒超时，5次重试")
 
         except Exception as e:
             logger.error(f"⚠️ AKShare超时配置失败: {e}")
@@ -165,13 +165,13 @@ class AKShareProvider:
             thread.daemon = True
             thread.start()
 
-            # 等待60秒
-            thread.join(timeout=60)
+            # 等待120秒
+            thread.join(timeout=120)
 
             if thread.is_alive():
                 # 超时了
-                logger.warning(f"⚠️ AKShare港股历史数据获取超时（60秒）: {symbol}")
-                raise Exception(f"AKShare港股历史数据获取超时（60秒）: {symbol}")
+                logger.warning(f"⚠️ AKShare港股历史数据获取超时（120秒）: {symbol}")
+                raise Exception(f"AKShare港股历史数据获取超时（120秒）: {symbol}")
             elif exception[0]:
                 # 有异常
                 raise exception[0]
@@ -253,13 +253,13 @@ class AKShareProvider:
             thread.daemon = True
             thread.start()
 
-            # 等待60秒
-            thread.join(timeout=60)
+            # 等待120秒
+            thread.join(timeout=120)
 
             if thread.is_alive():
                 # 超时了
-                logger.warning(f"⚠️ AKShare港股信息获取超时（60秒），使用备用方案")
-                raise Exception("AKShare港股信息获取超时（60秒）")
+                logger.warning(f"⚠️ AKShare港股信息获取超时（120秒），使用备用方案")
+                raise Exception("AKShare港股信息获取超时（120秒）")
             elif exception[0]:
                 # 有异常
                 raise exception[0]

@@ -26,16 +26,16 @@ load_dotenv(project_root / ".env", override=True)
 
 # 导入自定义组件
 from web.utils.persistence import load_model_selection, save_model_selection
-from components.header import render_header
-from components.analysis_form import render_analysis_form
-from components.results_display import render_results
+from web.components.header import render_header
+from web.components.analysis_form import render_analysis_form
+from web.components.results_display import render_results
 from web.components.sidebar import render_sidebar # 从web.components.sidebar导入
-from utils.api_checker import check_api_keys
-from utils.analysis_runner import run_stock_analysis, validate_analysis_params, format_analysis_results
-from utils.progress_tracker import SmartStreamlitProgressDisplay, create_smart_progress_callback
-from utils.async_progress_tracker import AsyncProgressTracker
-from components.async_progress_display import display_unified_progress
-from utils.smart_session_manager import get_persistent_analysis_id, set_persistent_analysis_id
+from web.utils.api_checker import check_api_keys
+from web.utils.analysis_runner import run_stock_analysis, validate_analysis_params, format_analysis_results
+from web.utils.progress_tracker import SmartStreamlitProgressDisplay, create_smart_progress_callback
+from web.utils.async_progress_tracker import AsyncProgressTracker
+from web.components.async_progress_display import display_unified_progress
+from web.utils.smart_session_manager import get_persistent_analysis_id, set_persistent_analysis_id
 
 # 设置页面配置
 st.set_page_config(
@@ -251,6 +251,58 @@ def initialize_session_state():
                 logger.info("📊 [配置恢复] 表单配置已恢复")
     except Exception as e:
         logger.warning(f"⚠️ [配置恢复] 表单配置恢复失败: {e}")
+
+def render_current_task_status():
+    """渲染当前任务状态栏（参考手机版设计）"""
+    try:
+        # 检查当前是否有运行中的分析
+        current_analysis_id = st.session_state.get('current_analysis_id')
+        
+        if current_analysis_id:
+            # 使用线程检测来获取真实状态
+            from utils.thread_tracker import check_analysis_status
+            actual_status = check_analysis_status(current_analysis_id)
+            is_running = (actual_status == 'running')
+            
+            if is_running:
+                # 获取进度数据
+                from utils.async_progress_tracker import get_progress_by_id
+                progress_data = get_progress_by_id(current_analysis_id)
+                
+                if progress_data:
+                    progress = progress_data.get('progress', 0)
+                    current_step = progress_data.get('current_step', '准备中...')
+                    
+                    # 显示当前任务状态栏
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                                color: white; padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <h4 style="margin: 0; font-size: 1.1rem;">🔄 当前分析任务</h4>
+                                <p style="margin: 0.2rem 0 0 0; font-size: 0.9rem; opacity: 0.9;">{current_step}</p>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 1.2rem; font-weight: bold;">{progress}%</div>
+                                <div style="font-size: 0.8rem; opacity: 0.8;">分析ID: {current_analysis_id[:8]}...</div>
+                            </div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.2); height: 6px; border-radius: 3px; margin-top: 0.5rem;">
+                            <div style="background: #4CAF50; height: 100%; width: {progress}%; border-radius: 3px; transition: width 0.3s ease;"></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    # 没有进度数据时显示简单状态
+                    st.info(f"🔄 分析任务运行中: {current_analysis_id[:8]}...")
+            elif actual_status == 'completed':
+                st.success(f"✅ 分析任务已完成: {current_analysis_id[:8]}...")
+            elif actual_status == 'failed':
+                st.error(f"❌ 分析任务失败: {current_analysis_id[:8]}...")
+                
+    except Exception as e:
+        logger.debug(f"渲染任务状态栏时出错: {e}")
+        # 静默处理错误，不影响主界面
 
 def main():
     """主应用程序"""
@@ -660,8 +712,10 @@ def main():
         col2 = None
     
     with col1:
+        # 显示当前任务状态栏（参考手机版）
+        render_current_task_status()
+        
         # 1. 分析配置区域
-
         st.header("⚙️ 分析配置")
 
         # 渲染分析表单

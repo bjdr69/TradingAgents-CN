@@ -662,18 +662,23 @@ source env/bin/activate
 # 2. 安装项目到虚拟环境（重要！）
 pip install -e .
 
-# 3. 启动Web管理界面
-# 方法1：使用项目启动脚本（推荐）
-python start_web.py
+# 3. 启动应用
+# 桌面版Web界面（推荐）
+python start_web.py        # 访问 http://localhost:8501
 
-# 方法2：使用原始启动脚本
-python web/run_web.py
+# 📱 手机版界面（移动优化）
+python start_mobile.py     # 访问 http://localhost:8502
 
-# 方法3：直接使用streamlit（需要先安装项目）
-streamlit run web/app.py
+# 🔄 同时运行两个版本（不同终端窗口）
+# 终端1: python start_web.py
+# 终端2: python start_mobile.py
 ```
 
-然后在浏览器中访问 `http://localhost:8501`
+**双版本支持**:
+- 🖥️ **桌面版** (8501端口): 完整功能，大屏幕优化
+- 📱 **手机版** (8502端口): 移动优化，后台任务支持
+
+> 📚 **详细指南**: 手机版设置和使用请参考 [手机版设置指南](MOBILE_SETUP.md)
 
 **Web界面特色功能**:
 
