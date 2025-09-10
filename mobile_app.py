@@ -890,7 +890,6 @@ def render_task_status(task):
             auto_refresh_key = f"auto_refresh_{task['id'][:8]}"
             auto_refresh = st.checkbox("🔄 自动刷新", value=True, key=auto_refresh_key)
             if auto_refresh:
-                import time
                 time.sleep(3)
                 st.rerun()
         
